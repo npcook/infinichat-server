@@ -3,33 +3,103 @@ import java.util.Iterator;
 import java.util.List;
 import java.io.*;
 import java.net.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.SQLTransientConnectionException;
 import java.text.*;
 import java.util.Date;
-
-import javax.xml.bind.*;
 
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
 
+import com.mysql.jdbc.exceptions.jdbc4.CommunicationsException;
+
+@SuppressWarnings("unchecked")
 public class Server implements Runnable {
 
+	/*
+	 * SQL Tables
+	 * users : id, name, password, display
+	 * groups: id, name, display
+	 * group_members: id, group_id, member_id
+	 * friends: id, first_id, second_id, accepted
+	 * 
+	 */
+	
+	private static boolean silentMode = false;
 	private static ServerSocket server;
 	private static Thread thread;
 	private static boolean isRunning = false;
 	private static List<Client> clients;
 	private static JSONParser parser;
 	private static Logger logger;
-	
+	private static Connection con;
+
+	public static void main(String[] args){
+
+		/*TODO: Add in config settings, NOOB :3*/
+
+		logger = new Logger(null);
+		parser = new JSONParser();
+		clients = new ArrayList<Client>();
+		try {
+			logger.loadConfig();
+		} catch (IOException e) {
+			System.out.println("Failed to load config file.");
+			e.printStackTrace();
+		}
+
+		if (args.length > 0 && args[0].equals("silent"))
+			silentMode = true;
+
+		log("Starting up server...");
+
+		try {
+			server = new ServerSocket(); 
+			server.bind(new InetSocketAddress("0.0.0.0", 49520));
+			log("Bound server to port 49520");
+			con = DriverManager.getConnection(logger.getDatabaseURL(), logger.getDatabaseUser(), logger.getDatabasePass());
+			log("Connected to database succesfully");
+		} catch (IOException e) {
+			log("Failed to bind to the port 49520 at 0.0.0.0, shutting down.");
+			e.printStackTrace(logger.getWriter());
+			e.printStackTrace();
+			System.exit(0);
+		} catch (SQLException e) {
+			log("Failed to connect to database.");
+			e.printStackTrace(logger.getWriter());
+			e.printStackTrace();
+			System.exit(0);
+		}
+
+		isRunning = true;
+
+		thread = new Thread(new Server());
+		thread.start();
+
+		while (true){
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+		}
+
+	}
+
 	public static void log(String str){
 
 		log(str, true);
 
 	}
-	
+
 	public static Logger getLogger(){ return logger; }
-	
+
 	static final String HEXES = "0123456789ABCDEF";
 	public static String getHex( byte [] raw ) {
 		if ( raw == null ) {
@@ -42,9 +112,9 @@ public class Server implements Runnable {
 		}
 		return hex.toString();
 	}
-	
+
 	private final static char[] ALPHABET = ("ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
-	"abcdefghijklmnopqrstuvwxyz0123456789+/").toCharArray();
+			"abcdefghijklmnopqrstuvwxyz0123456789+/").toCharArray();
 	public static String encodeBase64(String str){
 		byte[] buf = str.getBytes();
 		int size = buf.length;
@@ -68,10 +138,10 @@ public class Server implements Runnable {
 		}
 		return new String(ar);
 	}
-	
+
 	public static void log(String str, boolean print){
 
-		if (print)
+		if (print && !silentMode)
 			System.out.println(str);
 
 		try {
@@ -87,107 +157,141 @@ public class Server implements Runnable {
 
 
 	}
-	
-	public static List<Client> getClients(){
-		
-		return clients;
-		
+
+	public static ResultSet executeQuery(String sql, String... args){
+
+		try {
+			PreparedStatement ps = con.prepareStatement(sql);
+			for (int i = 0; i < args.length; ++i)
+				ps.setString(i + 1, args[i]);
+			return ps.executeQuery();
+		} catch (Exception e) {
+			if (e instanceof CommunicationsException || e instanceof SQLTransientConnectionException){
+				try {
+					con.close();
+				} catch(Exception ee){ }
+				try {
+					con = DriverManager.getConnection(logger.getDatabaseURL(), logger.getDatabaseUser(), logger.getDatabasePass());
+					log("Reconnection to SQL database successful.");
+					return executeQuery(sql, args);
+				} catch (Exception ee) {
+					log("Attempted to reconnect to database after timeout, but failed:");
+					ee.printStackTrace(logger.getWriter());
+					ee.printStackTrace();
+				}
+			} else {
+				log("Error when executing SQL : " + sql);
+				e.printStackTrace(logger.getWriter());
+				e.printStackTrace();
+			}
+		}
+
+		return null;
 	}
-	
+
+	public static int executeUpdate(String sql, String... args){
+
+		try {
+			PreparedStatement ps = con.prepareStatement(sql);
+			for (int i = 0; i < args.length; ++i)
+				ps.setString(i + 1, args[i]);
+			return ps.executeUpdate();
+		} catch (Exception e) {
+			if (e instanceof CommunicationsException || e instanceof SQLTransientConnectionException){
+				try {
+					con.close();
+				} catch(Exception ee){ }
+				try {
+					con = DriverManager.getConnection(logger.getDatabaseURL(), logger.getDatabaseUser(), logger.getDatabasePass());
+					log("Reconnection to SQL database successful.");
+					return executeUpdate(sql, args);
+				} catch (Exception ee) {
+					log("Attempted to reconnect to database after timeout, but failed:");
+					ee.printStackTrace(logger.getWriter());
+					ee.printStackTrace();
+				}
+			} else {
+				log("Error when executing SQL : " + sql);
+				e.printStackTrace(logger.getWriter());
+				e.printStackTrace();
+			}
+		}
+
+		return -1;
+	}
+
+	public static List<Client> getClients(){
+
+		return clients;
+
+	}
+
 	public static Client getClient(String username){
-		
+
 		Iterator<Client> citer = clients.iterator();
 		while (citer.hasNext()){
 			Client c = citer.next();
 			if (c.username.equals(username))
 				return c;
 		}
-		
+
 		return null;
-		
+
 	}
-	
+
+	/**
+	 * Converts a string message to a JSONObject
+	 * 
+	 * @param msg String to be converted
+	 * @return JSONObject represented by the string
+	 * @throws ParseException If there's an error parsing
+	 */
 	public static JSONObject parseMsg(String msg) throws ParseException{
-		
+
 		return (JSONObject) parser.parse(msg);
-		
+
 	}
-	
+
+	/**
+	 * Creates a JSONObject that is the default reply to a message (result 200, "Success")
+	 * 
+	 * @param replyObj Message to reply to
+	 * @return Reply message
+	 */
 	public static JSONObject defaultReply(JSONObject replyObj){
-		
+
 
 		JSONObject reply = new JSONObject();
 		reply.put("reply", replyObj.get("message"));
 		reply.put("result", 200);
 		reply.put("result_message", "Success");
 		reply.put("tag", replyObj.get("tag"));
-		
+
 		return reply;
-		
+
 	}
-	
+
+	/**
+	 * Creates a JSONObject that is a reply to the given object using the message and tag fields
+	 * 
+	 * @param o Message to reply to
+	 * @return Reply message
+	 */
 	public static JSONObject reply(JSONObject o){
-		
+
 		JSONObject reply = new JSONObject();
 		reply.put("reply", o.get("message"));
 		reply.put("tag", o.get("tag"));
-		
+
 		return reply;
-		
+
 	}
-	
-	public static void main(String[] args){
-		
-		/*TODO: Add in config settings, NOOB :3*/
-		
-		Server s = new Server();
-		
-		try {
-			server = new ServerSocket(); 
-			server.bind(new InetSocketAddress("0.0.0.0", 49520));
-			
-		} catch (IOException e) {
-			log("Failed to bind to the port 49520 at 0.0.0.0, shutting down.");
-			e.printStackTrace(logger.getWriter());
-			e.printStackTrace();
-			System.exit(0);
-		}
-		
-		isRunning = true;
-		
-		thread = new Thread(s);
-		thread.start();
-		
-		while (true){
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e) {
-				e.printStackTrace();
-			}
-		}
-		
-	}
-	
-	public Server(){
-		
-		logger = new Logger(null);
-		parser = new JSONParser();
-		clients = new ArrayList<Client>();
-		try {
-			logger.loadConfig();
-		} catch (IOException e) {
-			System.out.println("Failed to load config file.");
-			e.printStackTrace();
-		}
-		
-	}
-	
-	@SuppressWarnings("unchecked")
+
 	@Override
 	public void run(){
-		
+
 		log("We Did It Seerver!!!");
-		
+
 		while (isRunning){
 
 			Socket connection = null;
@@ -232,71 +336,103 @@ public class Server implements Runnable {
 			data = null;
 			String message = null;
 			JSONObject obj = null, reply = null;
-			
+
 			try {
-				
+
 				message = new String(stream.toByteArray(), "UTF8");
 				stream.close();
 				obj = (JSONObject) parser.parse(message);
+
+				log("Login from " + obj.get("username"));
 				
-				log("Login from " + obj.get("username") + "\nPW: " + obj.get("password") + "\nstatus: " + obj.get("initial_status"));
+				//UUID.randomUUID().toString()
 				
-				reply = reply(obj);
+				String username = (String) obj.get("username");
+				ResultSet rs = executeQuery("SELECT * FROM `users` WHERE name = ?", username);
+				boolean rss = rs.next();
+				System.out.println(rss);
 				
-				JSONObject loginData = new JSONObject();
-				loginData.put("username", obj.get("username"));
+				if (rss){
 				
-				/* TODO: Actually do this thing                =========================           */
-				
-				loginData.put("display_name", "C9." + obj.get("username") + ".HyperX<CRUMBLING>");
-				loginData.put("status", obj.get("initial_status"));
-				
-				reply.put("result", 200);
-				reply.put("result_message", "Success");
-				reply.put("me", loginData);
-				
-				log(reply.toJSONString());
-				
-				connection.getOutputStream().write((reply.toJSONString() + "\r\n").getBytes("UTF8"));
-				connection.getOutputStream().flush();
-				
-				Client client = new Client(connection, (String) obj.get("username"));
-				
-				clients.add(client);
-				
-				log("Clients on server " + clients.size());
-				
-				client.start();
-				
-				Thread.sleep(2000);
-				
-				JSONObject jmessage = new JSONObject(), selfInfo = new JSONObject();
-				JSONArray users = new JSONArray(), selfArray = new JSONArray();
-				selfInfo.put("message", "detail.users");
-				selfArray.add(client.toDetails());
-				selfInfo.put("users", selfArray);
-				selfInfo.put("tag", "_" + Double.toString((Math.random() * 0xDEADBEEF)));
-				jmessage.put("message", "detail.users");
-				
-				for (Client c : clients){
-					if (!c.username.equals(client.username)){
-						users.add(c.toDetails());
-						log("Sending my info to " + c.username + "\r\n" + selfInfo.toJSONString());
-						c.sendMessage(selfInfo);
+					String password = rs.getString("password");
+					
+					if (password.equals(obj.get("password"))){
+						
+						reply = reply(obj);
+						
+						//Reply to login giving the client it's display name
+						JSONObject loginData = new JSONObject();
+						loginData.put("username", username);
+						loginData.put("display_name", rs.getString("display"));
+						loginData.put("status", obj.get("initial_status"));
+		
+						reply.put("result", 200);
+						reply.put("result_message", "Success");
+						reply.put("me", loginData);
+		
+						Client client = new Client(connection, username, (String) loginData.get("display_name"));
+		
+						client.sendMessage(reply);
+						
+						clients.add(client);
+		
+						log("Clients on server " + clients.size());
+		
+						client.start();
+		
+						JSONObject jmessage = new JSONObject(), selfInfo = new JSONObject();
+						JSONArray users = new JSONArray(), selfArray = new JSONArray();
+						selfInfo.put("message", "detail.users");
+						selfArray.add(client.toDetails());
+						selfInfo.put("users", selfArray);
+						selfInfo.put("tag", "_" + Double.toString((Math.random() * 0xDEADBEEF)));
+						jmessage.put("message", "detail.users");
+		
+						for (Client c : clients){
+							if (!c.username.equals(client.username)){
+								users.add(c.toDetails());
+								log("Sending my info to " + c.username + "\r\n" + selfInfo.toJSONString());
+								c.sendMessage(selfInfo);
+							}
+						}
+						jmessage.put("users", users);
+						jmessage.put("tag", "_" + Double.toString((Math.random() * 0xDEADBEEF)));
+						client.sendMessage(jmessage);
+		
+						log("Sending client info to " + client.username + "\r\n" + jmessage.toJSONString());
+						
+					} else { //Wrong password
+						
+						log("Incorrect password given.");
+						JSONObject error = new JSONObject();
+						error.put("reply", "login");					
+						error.put("result", 406);
+						error.put("result_message", "The password you put in is incorrect.");
+						error.put("tag", obj.get("tag"));
+						connection.getOutputStream().write(error.toJSONString().getBytes("UTF8"));
+						connection.getOutputStream().flush();
+						
 					}
+
+				} else { //Username doesn't exist
+					
+					log("Username doesn't exist.");
+					JSONObject error = new JSONObject();
+					error.put("reply", "login");					
+					error.put("result", 405);
+					error.put("result_message", "The username doesn't exist.");
+					error.put("tag", obj.get("tag"));
+					connection.getOutputStream().write(error.toJSONString().getBytes("UTF8"));
+					connection.getOutputStream().flush();
+					
 				}
-				jmessage.put("users", users);
-				jmessage.put("tag", "_" + Double.toString((Math.random() * 0xDEADBEEF)));
-				client.sendMessage(jmessage);
-				
-				log("Sending client info to " + client.username + "\r\n" + jmessage.toJSONString());
-				
+					
 			} catch (Exception e) {
 
 				log("Exception thrown when trying to log in client.", false);
 				try {
 					JSONObject error = new JSONObject();
-					error.put("reply", "login");
+					error.put("reply", "login");					
 					error.put("result", 500);
 					error.put("result_message", "Server got screwed up.");
 					error.put("tag", obj.get("tag"));
@@ -312,10 +448,10 @@ public class Server implements Runnable {
 
 			}
 
-			
-			
+
+
 		}
-		
+
 	}
-	
+
 }
