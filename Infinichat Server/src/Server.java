@@ -57,7 +57,7 @@ public class Server implements Runnable {
 		if (args.length > 0 && args[0].equals("silent"))
 			silentMode = true;
 
-		log("Starting up server...");
+		log("Starting up server...\r\nUse\"silent\" to turn off console logging.");
 
 		try {
 			server = new ServerSocket(); 
@@ -349,10 +349,9 @@ public class Server implements Runnable {
 				
 				String username = (String) obj.get("username");
 				ResultSet rs = executeQuery("SELECT * FROM `users` WHERE name = ?", username);
-				boolean rss = rs.next();
-				System.out.println(rss);
+				boolean hasUsername = rs.next();
 				
-				if (rss){
+				if (hasUsername){
 				
 					String password = rs.getString("password");
 					
@@ -380,13 +379,12 @@ public class Server implements Runnable {
 		
 						client.start();
 		
-						JSONObject jmessage = new JSONObject(), selfInfo = new JSONObject();
+						JSONObject selfInfo = new JSONObject();
 						JSONArray users = new JSONArray(), selfArray = new JSONArray();
 						selfInfo.put("message", "detail.users");
 						selfArray.add(client.toDetails());
 						selfInfo.put("users", selfArray);
 						selfInfo.put("tag", "_" + Double.toString((Math.random() * 0xDEADBEEF)));
-						jmessage.put("message", "detail.users");
 		
 						for (Client c : clients){
 							if (!c.username.equals(client.username)){
@@ -395,13 +393,8 @@ public class Server implements Runnable {
 								c.sendMessage(selfInfo);
 							}
 						}
-						jmessage.put("users", users);
-						jmessage.put("tag", "_" + Double.toString((Math.random() * 0xDEADBEEF)));
-						client.sendMessage(jmessage);
-		
-						log("Sending client info to " + client.username + "\r\n" + jmessage.toJSONString());
 						
-					} else { //Wrong password
+					} else {
 						
 						log("Incorrect password given.");
 						JSONObject error = new JSONObject();
@@ -409,12 +402,12 @@ public class Server implements Runnable {
 						error.put("result", 406);
 						error.put("result_message", "The password you put in is incorrect.");
 						error.put("tag", obj.get("tag"));
-						connection.getOutputStream().write(error.toJSONString().getBytes("UTF8"));
+						connection.getOutputStream().write((error.toJSONString() + "\r\n").getBytes("UTF8"));
 						connection.getOutputStream().flush();
 						
 					}
 
-				} else { //Username doesn't exist
+				} else {
 					
 					log("Username doesn't exist.");
 					JSONObject error = new JSONObject();
@@ -422,7 +415,7 @@ public class Server implements Runnable {
 					error.put("result", 405);
 					error.put("result_message", "The username doesn't exist.");
 					error.put("tag", obj.get("tag"));
-					connection.getOutputStream().write(error.toJSONString().getBytes("UTF8"));
+					connection.getOutputStream().write((error.toJSONString() + "\r\n").getBytes("UTF8"));
 					connection.getOutputStream().flush();
 					
 				}
@@ -432,11 +425,11 @@ public class Server implements Runnable {
 				log("Exception thrown when trying to log in client.", false);
 				try {
 					JSONObject error = new JSONObject();
-					error.put("reply", "login");					
+					error.put("reply", "login");
 					error.put("result", 500);
 					error.put("result_message", "Server got screwed up.");
 					error.put("tag", obj.get("tag"));
-					connection.getOutputStream().write(error.toJSONString().getBytes("UTF8"));
+					connection.getOutputStream().write((error.toJSONString() + "\r\n").getBytes("UTF8"));
 					connection.getOutputStream().flush();
 				} catch (Exception e1){
 					e.printStackTrace();
