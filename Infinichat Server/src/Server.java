@@ -30,7 +30,7 @@ public class Server implements Runnable {
 	 * friends: id, first_id, second_id, accepted
 	 * 
 	 */
-	
+
 	private static boolean silentMode = false;
 	private static ServerSocket server;
 	private static Thread thread;
@@ -41,8 +41,6 @@ public class Server implements Runnable {
 	private static Connection con;
 
 	public static void main(String[] args){
-
-		/*TODO: Add in config settings, NOOB :3*/
 
 		logger = new Logger(null);
 		parser = new JSONParser();
@@ -158,12 +156,12 @@ public class Server implements Runnable {
 
 	}
 
-	public static ResultSet executeQuery(String sql, String... args){
+	public static ResultSet executeQuery(String sql, Object... args){
 
 		try {
 			PreparedStatement ps = con.prepareStatement(sql);
 			for (int i = 0; i < args.length; ++i)
-				ps.setString(i + 1, args[i]);
+				ps.setObject(i + 1, args[i]);
 			return ps.executeQuery();
 		} catch (Exception e) {
 			if (e instanceof CommunicationsException || e instanceof SQLTransientConnectionException){
@@ -189,12 +187,12 @@ public class Server implements Runnable {
 		return null;
 	}
 
-	public static int executeUpdate(String sql, String... args){
+	public static int executeUpdate(String sql, Object... args){
 
 		try {
 			PreparedStatement ps = con.prepareStatement(sql);
 			for (int i = 0; i < args.length; ++i)
-				ps.setString(i + 1, args[i]);
+				ps.setObject(i + 1, args[i]);
 			return ps.executeUpdate();
 		} catch (Exception e) {
 			if (e instanceof CommunicationsException || e instanceof SQLTransientConnectionException){
@@ -344,58 +342,81 @@ public class Server implements Runnable {
 				obj = (JSONObject) parser.parse(message);
 
 				log("Login from " + obj.get("username"));
-				
+
 				//UUID.randomUUID().toString()
-				
+
 				String username = (String) obj.get("username");
 				ResultSet rs = executeQuery("SELECT * FROM `users` WHERE name = ?", username);
-				boolean hasUsername = rs.next();
-				
+				boolean hasUsername = rs.next(), isLoggedIn = false;
+
 				if (hasUsername){
-				
+
 					String password = rs.getString("password");
-					
+
 					if (password.equals(obj.get("password"))){
-						
+
 						reply = reply(obj);
-						
-						//Reply to login giving the client it's display name
-						JSONObject loginData = new JSONObject();
-						loginData.put("username", username);
-						loginData.put("display_name", rs.getString("display"));
-						loginData.put("status", obj.get("initial_status"));
-		
-						reply.put("result", 200);
-						reply.put("result_message", "Success");
-						reply.put("me", loginData);
-		
-						Client client = new Client(connection, username, (String) loginData.get("display_name"));
-		
-						client.sendMessage(reply);
-						
-						clients.add(client);
-		
-						log("Clients on server " + clients.size());
-		
-						client.start();
-		
-						JSONObject selfInfo = new JSONObject();
-						JSONArray users = new JSONArray(), selfArray = new JSONArray();
-						selfInfo.put("message", "detail.users");
-						selfArray.add(client.toDetails());
-						selfInfo.put("users", selfArray);
-						selfInfo.put("tag", "_" + Double.toString((Math.random() * 0xDEADBEEF)));
-		
-						for (Client c : clients){
-							if (!c.username.equals(client.username)){
-								users.add(c.toDetails());
-								log("Sending my info to " + c.username + "\r\n" + selfInfo.toJSONString());
-								c.sendMessage(selfInfo);
+
+						for (Client c : clients)
+							if (c.username.equals(username)){
+								isLoggedIn = true;
+								break;
 							}
+
+						if (!isLoggedIn){
+
+							//Reply to login giving the client it's display name
+							JSONObject loginData = new JSONObject();
+							loginData.put("username", username);
+							loginData.put("display_name", rs.getString("display"));
+							loginData.put("status", obj.get("initial_status"));
+
+							reply.put("result", 200);
+							reply.put("result_message", "Success");
+							reply.put("me", loginData);
+
+							Client client = new Client(connection, username, (String) loginData.get("display_name"), rs.getInt("id"));
+
+							client.sendMessage(reply);
+
+							clients.add(client);
+
+							log("Clients on server " + clients.size());
+
+							client.start();
+
+							for (Group g : client.getGroups())
+								log(g.groupname + "(" + g.display + ") - " + g.users.size() + " - ID " + g.ID);
+							
+							
+							JSONObject selfInfo = new JSONObject();
+							JSONArray selfArray = new JSONArray();
+							selfInfo.put("message", "detail.users");
+							selfArray.add(client.toDetails());
+							selfInfo.put("users", selfArray);
+							selfInfo.put("tag", "_" + Double.toString((Math.random() * 0xDEADBEEF)));
+
+							List<User> frends = client.getFriends();
+
+							for (User friend : frends)
+								if (friend.client != null)
+									friend.client.sendMessage(selfInfo);
+
+						} else {
+
+							log("Second login attempt.");
+							JSONObject error = new JSONObject();
+							error.put("reply", "login");
+							error.put("result", 407);
+							error.put("result_message", "You are already logged in.");
+							error.put("tag", obj.get("tag"));
+							connection.getOutputStream().write((error.toJSONString() + "\r\n").getBytes("UTF8"));
+							connection.getOutputStream().flush();
+
 						}
-						
+
 					} else {
-						
+
 						log("Incorrect password given.");
 						JSONObject error = new JSONObject();
 						error.put("reply", "login");					
@@ -404,11 +425,11 @@ public class Server implements Runnable {
 						error.put("tag", obj.get("tag"));
 						connection.getOutputStream().write((error.toJSONString() + "\r\n").getBytes("UTF8"));
 						connection.getOutputStream().flush();
-						
+
 					}
 
 				} else {
-					
+
 					log("Username doesn't exist.");
 					JSONObject error = new JSONObject();
 					error.put("reply", "login");					
@@ -417,9 +438,9 @@ public class Server implements Runnable {
 					error.put("tag", obj.get("tag"));
 					connection.getOutputStream().write((error.toJSONString() + "\r\n").getBytes("UTF8"));
 					connection.getOutputStream().flush();
-					
+
 				}
-					
+
 			} catch (Exception e) {
 
 				log("Exception thrown when trying to log in client.", false);
